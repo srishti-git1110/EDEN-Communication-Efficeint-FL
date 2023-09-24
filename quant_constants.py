@@ -1,8 +1,13 @@
 import torch
 from functools import lru_cache
 
-# quantization values QIb from "sec 3 -  Optimal 2b-Values Quantization"
-quantization_vals = {1: [0.7978845608028654],
+def gen_boundaries(centroids):
+  return [(a + b) / 2 for a, b in zip(centroids[:-1], centroids[1:])]
+
+
+def get_normal_quantization_centroids_and_boundaries():
+  # quantization values QIb from "sec 3 -  Optimal 2b-Values Quantization"
+  centroids      = {1: [0.7978845608028654],
                     2: [0.4527800398860679, 1.5104176087114887],
                     3: [0.24509416307340598, 0.7560052489539643, 1.3439092613750225, 2.151945669890335],
                     4: [0.12839501671105813, 0.38804823445328507, 0.6567589957631145, 0.9423402689122875,
@@ -67,7 +72,52 @@ quantization_vals = {1: [0.7978845608028654],
                         3.2282236667414654, 3.3295406612081644, 3.443713971315384, 3.5751595986789093,
                         3.7311414987004117, 3.9249650523739246, 4.185630113705256, 4.601871059539151]}
 
-# construct full QIb by appending negative values as well
-def get_quantization_intervals_vals():
-  quantization_vals = {i: [-l for l in reversed(lst)] + lst for i, lst in quantization_vals.items()}
+  centroids = {i: [-l for l in reversed(lst)] + lst for i, lst in quantization_vals.items()}
+  boundaries = {i: gen_boundaries(c) for i, c in centroids.items()} # bins
 
+  return centroids, boundaries
+
+
+def get_ee_quantization_centroids_and_boundaries():
+  deltas = {0.1: 5.071514195296913,
+            0.2: 4.45202601258643,
+            0.3: 4.043459049426019,
+            0.4: 3.7248574872501194,
+            0.5: 3.4561779181240126,
+            0.6: 3.218733147950843,
+            0.7: 3.0020635211258195,
+            0.8: 2.7996155444998294,
+            0.9: 2.607049875659868,
+            1: 2.4216194555629045,
+            2: 1.0824465435871389,
+            3: 0.5224332449870417,
+            4: 0.25901674387569074,
+            5: 0.12923770176712424,
+            6: 0.06458514949372329,
+            7: 0.032288366192005924,
+            8: 0.01614365715340682}
+  
+  centroids = {}
+  boundaries = {}
+
+  for b, delta in deltas.items():
+    centroids[b] = [delta * j for j in range(-1000, 1001)]
+    boundaries[b] = gen_boundaries(centroids[b])
+
+  return centroids, boundaries
+
+
+QUANTIZATION_CONSTANTS = {
+  'max_lloyd': get_normal_quantization_centroids_and_boundaries(),
+  'ee': get_ee_quantization_centroids_and_boundaries(),
+}
+
+
+# learnt about this very useful decorator :D -- It caches the quantization constants so that they do not need to be calculated every time a gradient vector is to be compressed before sending to the server
+@lru_cache(maxsize=None)
+def get_quantization_constants(q_type, device):
+  centroids, boundaries = QUANTIZATION_CONSTANTS(q_type)
+  centroids = {i: torch.tensor(c, device=device) for i, c in centroids.items()}
+  boundaries = {i: torch.tensor(c, device=device) for i, c in boundaries.items()}
+
+  return centroids, boundaries
